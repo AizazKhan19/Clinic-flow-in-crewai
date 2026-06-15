@@ -1,0 +1,26 @@
+# Virtual Environment
+venv/
+ENV/
+env/
+
+# Sensitive Information (API Keys)
+.env
+
+# Python Cache and Compiled Files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+
+# Local Data / PDFs (Vector DB and Raw Data protection)
+data/
+.crewai/
+
+# IDE / Editor Specific Files
+.vscode/
+.idea/
+
+# OS Specific Files
+.DS_Store
+Thumbs.db
