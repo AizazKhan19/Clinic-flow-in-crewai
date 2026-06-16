@@ -1,5 +1,5 @@
 from crewai import Agent, Task, Crew
-from crewai.flow.flow import Flow, start, router, listen
+from crewai.flow.flow import Flow, start, router, listen, or_
 from pydantic import BaseModel, ConfigDict, Field
 from crewai.tools import BaseTool
 from configuration import llm
@@ -29,6 +29,13 @@ class MyClinicStates(BaseModel):
     # 3. Router Key
     doctor_type : str = ""            # Isme final path string save hogi
 
+    # Doctor Decision states global
+    doctor_notes : str = ""            # Doctor ke remarks (Normal ya Critical)
+    prescription : str = ""            # Agar normal hua toh medicine/diet yahan aayegi
+    required_tests : str = ""          # Agar critical hua toh tests yahan aayenge
+    is_critical : bool = False         # Laboratory routing ke liye flag
+    doctor : str = ""                  # the name of doctor who suggested tests
+
     
 
 #  After every iteration , Agent will output this  kind of dat
@@ -51,6 +58,15 @@ class ClinicExtractionSchema(BaseModel):
     # The actual response to display
     agent_reply: str = ""
 
+    
+
+# doctor decision state which agent will use to update global states
+class DoctorDecisionState(BaseModel):
+    is_critical: bool = Field(..., description="Set to True if symptoms are dangerous/vague, False if normal.")
+    prescription_or_diet: Optional[str] = Field(None, description="Provide medicines and diet plan if is_critical is False.")
+    suggested_tests: Optional[str] = Field(None, description="Provide specific tests (like ECG, CBC) if is_critical is True.")
+    doctor_reply: str = Field(..., description="The direct comforting message to display to the patient.")
+
 
 
 
@@ -60,7 +76,7 @@ class ClinicFlow(Flow[MyClinicStates]):
 
     def greet_and_validation(self):
         print("============================================================")
-        print("🏥 WELCOME TO THE AI CLINIC INFORMATION DESK 🏥")
+        print(" WELCOME TO THE AI CLINIC INFORMATION DESK ")
         print("============================================================\n")
         
         print("Desk Agent: Welcome to Our Clinic! Please provide an ID or let me know if you are new to proceed.\n")
@@ -148,8 +164,8 @@ class ClinicFlow(Flow[MyClinicStates]):
                         self.state.patient_id = new_id
                         turn_result.extracted_id = new_id # Agent ke schema ko bhi sync kar diya
                     
-                    print(f"🎉 [SYSTEM]: New Patient successfully saved to CSV Database!")
-                    print(f"⚠️ [SYSTEM]: Generated Patient ID is: {self.state.patient_id}\n")
+                    print(f"[SYSTEM]: New Patient successfully saved to CSV Database!")
+                    print(f"[SYSTEM]: Generated Patient ID is: {self.state.patient_id}\n")
 
             # Check if triage is done
             if turn_result.symptoms_finished:
@@ -174,28 +190,145 @@ class ClinicFlow(Flow[MyClinicStates]):
     # 3. LISTENERS (DOCTOR NODES): Jin par router bhejega
     # ------------------------------------------------------------
     @listen("cardiologist")
-    def cardiologist_node(self):
-        print("\n🏥 --- WELCOME TO THE CARDIOLOGY DEPARTMENT --- 🏥")
-        print(f"Dr. Heart Agent: Hello {self.state.name}, I am your Cardiologist.")
-        print(f"Reviewing Symptoms: '{self.state.current_symptoms}'")
-        print("Action: Running an immediate ECG check. Please wait...")
-        return "Cardiologist treatment started."
+    def cardiologist_node(self) ->Literal['test_required']:
+
+        print("\n--- WELCOME TO THE CARDIOLOGY DEPARTMENT ---")
+        print(f"[SYSTEM]: Dr. Heart Agent is analyzing symptoms for {self.state.name}...\n")
+
+        cardio_agent = Agent(
+            role='Cardiologist Agent',
+            goal="To give treatment or recommend tests based on patient symptoms analysis if its realed to heart.",
+            backstory="""You are a Cardiologist Doctor specialized in heart issues with 30+ years of experience. 
+            You carefully analyze symptoms and decide whether the condition is 'normal' (needs medicine/diet) 
+            or 'critical' (needs laboratory tests).""",
+            llm=llm,
+            verbose=False
+        )
+
+        cardio_task = Task(
+            description=f"""Analyze the patient's context deeply:
+            Patient Name: {self.state.name}
+            Current Symptoms: {self.state.current_symptoms}
+            Medical History: {self.state.medical_history}
+            
+            STRICT RULES:
+            1. If symptoms indicate severe distress, radiating chest pain, or high-risk history, set 'is_critical' to True and list required labs in 'suggested_tests'.
+            2. If symptoms are stable or routine, set 'is_critical' to False and provide data in 'prescription_or_diet'.
+            3. Write your final direct response to the patient in 'doctor_reply'.""",
+            expected_output="Structured critical assessment and medical guidance.",
+            agent=cardio_agent,
+            output_pydantic=DoctorDecisionState
+        )
+
+        crew = Crew(agents=[cardio_agent], tasks=[cardio_task], verbose=False)
+        result = crew.kickoff().pydantic
+
+
+        # states synchronization
+
+        if result.is_critical:
+            self.state.required_tests = result.suggested_tests
+            print(f'Cardiologist doctor reply > {result.doctor_reply}')
+            return "test_required"
+        else:
+            self.state.prescription = result.prescription_or_diet
+            print(f' Cardiologist Doctor Prescription : {result.doctor_reply}')
+
+        
 
     @listen("orthopedic")
     def orthopedic_node(self):
-        print("\n🏥 --- WELCOME TO THE ORTHOPEDIC DEPARTMENT --- 🏥")
-        print(f"Dr. Bones Agent: Hello {self.state.name}, I am your Orthopedic Specialist.")
-        print(f"Reviewing Symptoms: '{self.state.current_symptoms}'")
-        print("Action: Scheduling an immediate X-Ray. Please relax...")
-        return "Orthopedic treatment started."
+
+        print("\n--- WELCOME TO THE ORTHOPEDIC DEPARTMENT ---")
+        print(f"[SYSTEM]: Dr. Bone Agent is analyzing symptoms for {self.state.name}...\n")
+
+        ortho_agent = Agent(
+            role='Orthopedic Agent',
+            goal="To give treatment or recommend tests based on patient symptoms analysis if its related to bones.",
+            backstory="""You are a Orthopedic Doctor specialized in Bone issues with 30+ years of experience. 
+            You carefully analyze symptoms and decide whether the condition is 'normal' (needs medicine/diet) 
+            or 'critical' (needs laboratory tests).""",
+            llm=llm,
+            verbose=False
+        )
+
+        ortho_task = Task(
+            description=f"""Analyze the patient's context deeply:
+            Patient Name: {self.state.name}
+            Current Symptoms: {self.state.current_symptoms}
+            Medical History: {self.state.medical_history}
+            
+            STRICT RULES:
+            1. If symptoms indicate severe distress, radiating bone pain, or high-risk history, set 'is_critical' to True and list required labs in 'suggested_tests'.
+            2. If symptoms are stable or routine, set 'is_critical' to False and provide data in 'prescription_or_diet'.
+            3. Write your final direct response to the patient in 'doctor_reply'.""",
+            expected_output="Structured critical assessment and medical guidance.",
+            agent=ortho_agent,
+            output_pydantic=DoctorDecisionState
+        )
+
+        crew = Crew(agents=[ortho_agent], tasks=[ortho_task], verbose=False)
+        result = crew.kickoff().pydantic
+
+        if result.is_critical:
+            self.state.required_tests = result.suggested_tests
+            print(f'Orthopedic doctor reply > {result.doctor_reply}')
+            return "test_required"
+        else:
+            self.state.prescription = result.prescription_or_diet
+            print(f' Orthopedic Doctors Prescription : {result.doctor_reply}')
+
+
+
+        
 
     @listen("general")
     def general_node(self):
-        print("\n🏥 --- WELCOME TO THE GENERAL PHYSICIAN DEPARTMENT --- 🏥")
-        print(f"Dr. General Agent: Hello {self.state.name}, I am your General Physician.")
-        print(f"Reviewing Symptoms: '{self.state.current_symptoms}'")
-        print("Action: Checking vitals and writing a general prescription...")
-        return "General treatment started."
+        print("\n--- WELCOME TO THE GENERAL DEPARTMENT ---")
+        print(f"[SYSTEM]: Dr. General Agent is analyzing symptoms for {self.state.name}...\n")
+
+        general_agent = Agent(
+            role='General Agent',
+            goal="To give treatment or recommend tests based on patient symptoms analysis if its related to general health.",
+            backstory="""You are a General Physician Doctor specialized in general issues with 30+ years of experience. 
+            You carefully analyze symptoms and decide whether the condition is 'normal' (needs medicine/diet) 
+            or 'critical' (needs laboratory tests).""",
+            llm=llm,
+            verbose=False
+        )
+
+        general_task = Task(
+            description=f"""Analyze the patient's context deeply:
+            Patient Name: {self.state.name}
+            Current Symptoms: {self.state.current_symptoms}
+            Medical History: {self.state.medical_history}
+            
+            STRICT RULES:
+            1. If symptoms indicate severe distress, or high-risk history, set 'is_critical' to True and list required labs in 'suggested_tests'.
+            2. If symptoms are stable or routine, set 'is_critical' to False and provide data in 'prescription_or_diet'.
+            3. Write your final direct response to the patient in 'doctor_reply'.""",
+            expected_output="Structured critical assessment and medical guidance.",
+            agent=general_agent,
+            output_pydantic=DoctorDecisionState
+        )
+
+        crew = Crew(agents=[general_agent], tasks=[general_task], verbose=False)
+        result = crew.kickoff().pydantic
+
+        if result.is_critical:
+            self.state.required_tests = result.suggested_tests
+            print(f'General doctor reply > {result.doctor_reply}')
+            return "test_required"
+        else:
+            self.state.prescription = result.prescription_or_diet
+            print(f' General Doctor Prescription : {result.doctor_reply}')
+
+
+    # lab fucntion
+    @listen(or_(cardiologist_node, orthopedic_node, general_node))
+    def lab(self):
+        print(f'Performing prescribed tests in Lab : { self.state.required_tests}')
+        
     
 
 
