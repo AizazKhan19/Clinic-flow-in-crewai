@@ -190,7 +190,7 @@ class ClinicFlow(Flow[MyClinicStates]):
     # 3. LISTENERS (DOCTOR NODES): Jin par router bhejega
     # ------------------------------------------------------------
     @listen("cardiologist")
-    def cardiologist_node(self) ->Literal['test_required']:
+    def cardiologist_node(self) ->Literal['test_required',]:
 
         print("\n--- WELCOME TO THE CARDIOLOGY DEPARTMENT ---")
         print(f"[SYSTEM]: Dr. Heart Agent is analyzing symptoms for {self.state.name}...\n")
@@ -224,6 +224,7 @@ class ClinicFlow(Flow[MyClinicStates]):
         result = crew.kickoff().pydantic
 
 
+        self.state.doctor = 'Cardiologist Doctor'
         # states synchronization
 
         if result.is_critical:
@@ -270,6 +271,8 @@ class ClinicFlow(Flow[MyClinicStates]):
         crew = Crew(agents=[ortho_agent], tasks=[ortho_task], verbose=False)
         result = crew.kickoff().pydantic
 
+        self.state.doctor = 'Orthopedic Doctor'
+
         if result.is_critical:
             self.state.required_tests = result.suggested_tests
             print(f'Orthopedic doctor reply > {result.doctor_reply}')
@@ -315,6 +318,8 @@ class ClinicFlow(Flow[MyClinicStates]):
         crew = Crew(agents=[general_agent], tasks=[general_task], verbose=False)
         result = crew.kickoff().pydantic
 
+        self.state.doctor = 'General Physician'
+        
         if result.is_critical:
             self.state.required_tests = result.suggested_tests
             print(f'General doctor reply > {result.doctor_reply}')
@@ -322,12 +327,14 @@ class ClinicFlow(Flow[MyClinicStates]):
         else:
             self.state.prescription = result.prescription_or_diet
             print(f' General Doctor Prescription : {result.doctor_reply}')
+            self.state.doctor = 'General Physician'
 
 
     # lab fucntion
     @listen(or_(cardiologist_node, orthopedic_node, general_node))
     def lab(self):
-        print(f'Performing prescribed tests in Lab : { self.state.required_tests}')
+        print(f'Performing prescribed tests in Lab : { self.state.required_tests} \n')
+        print(f'{self.state.doctor} Prescribed the Tests')
     
 
 flow = ClinicFlow()
