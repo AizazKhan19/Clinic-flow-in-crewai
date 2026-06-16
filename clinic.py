@@ -328,9 +328,7 @@ class ClinicFlow(Flow[MyClinicStates]):
     @listen(or_(cardiologist_node, orthopedic_node, general_node))
     def lab(self):
         print(f'Performing prescribed tests in Lab : { self.state.required_tests}')
-        
     
-
 
 flow = ClinicFlow()
 
