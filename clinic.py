@@ -5,12 +5,16 @@ from crewai.tools import BaseTool
 from configuration import llm
 from crewai_tools import CSVSearchTool
 from typing import Optional, Literal, Type
+from custom_tool import CSVReadWriteTool
+
+# tool's object initialization
+csv_tool = CSVReadWriteTool()
 
 class MyClinicStates(BaseModel):
     model_config = ConfigDict(validate_assignment=True)
     
     # 1. Patient Core Data (Registration ke liye)
-    patient_id : int = None
+    patient_id : str = None
     name : str = ""
     age : int = None
     gender : str = ""
@@ -30,12 +34,14 @@ class MyClinicStates(BaseModel):
 #  After every iteration , Agent will output this  kind of dat
 class ClinicExtractionSchema(BaseModel):
     # Registration Extraction
-    extracted_id: Optional[int] = None
+    extracted_id: Optional[str] = None
     extracted_name: Optional[str] = None
     extracted_age: Optional[int] = None
     extracted_gender: Optional[str] = None
     extracted_contact: Optional[int] = None
     extracted_history: Optional[str] = None
+
+    extracted_symptoms: Optional[str] = None
     
     # Flags & Triage
     is_registered_now: bool = False
@@ -45,16 +51,6 @@ class ClinicExtractionSchema(BaseModel):
     # The actual response to display
     agent_reply: str = ""
 
-
-# defining input schema for my tool
-class Mytoolinput(BaseModel):
-    path : str = Field(..., description= " the path to which data will be read from and write to")
-
-# defining my custom tool
-class CSVReadWriteTool(BaseTool):
-    name : str  = "Csv read and write tool"
-    description : str = " this tool will read csv file and write data to it"
-    args_schema : Type[BaseModel] = Mytoolinput
 
 
 
@@ -70,7 +66,7 @@ class ClinicFlow(Flow[MyClinicStates]):
         print("Desk Agent: Welcome to Our Clinic! Please provide an ID or let me know if you are new to proceed.\n")
         
         chat_history = []
-        csv_tool = CSVSearchTool(csv='data/patients_data.csv')
+        csv_tool = CSVReadWriteTool()
 
         # Main Loop: Jab tak doctor route nahi milta chat chalti rahegi
         while not self.state.symptoms_complete:
@@ -98,10 +94,10 @@ class ClinicFlow(Flow[MyClinicStates]):
                 Current System States: {self.state.model_dump()}
 
                 STRICT INSTRUCTIONS:
-                1. ID CHECK: If user provided an ID and 'is_registered' is False, use CSVSearchTool. If found, mark 'is_registered_now' as True and extract details.
-                2. REGISTRATION: If ID not found, ask for Name, Age, Gender, Contact, History. Extract whatever they provide in the latest message. If all provided, set 'is_registered_now' to True.
+                1. ID CHECK: If user provided an ID and 'is_registered' is False, execute CSVReadWriteTool with that ID string. Look closely at the tool output. If the tool finds a match for that specific ID row, mark 'is_registered_now' as True, extract all details from that row, and map the ID to 'extracted_id'.
+                2. REGISTRATION: If ID not found or tool returns empty/no match, ask for Name, Age, Gender, Contact, medical history (optional/  if have). Extract whatever they provide in the latest message. If all provided, set 'is_registered_now' to True. else ask for remaining things and then when you got all the things then set 'is_registered_now' to True.
                 3. SYMPTOMS: If patient is registered/found, ask for symptoms. Analyze carefully. If vague, ask follow-ups. If 100% certain, set 'symptoms_finished' to True and 'chosen_doctor_path' to one of: 'cardiologist_path', 'orthopedic_path', 'general_path'.
-                4. BOUNDARY: Stay strictly within clinic domain. Politely refuse politics/jokes.
+                4. BOUNDARY: Stay strictly within clinic domain. Politely refuse politics/jokes etc.
                 5. Provide your next natural response in 'agent_reply'.""",
                 expected_output="Structured chat turn analysis and data extraction.",
                 agent=desk_agent,
@@ -115,29 +111,50 @@ class ClinicFlow(Flow[MyClinicStates]):
             print(f"\nDesk Agent: {turn_result.agent_reply}\n")
             chat_history.append(f"Agent: {turn_result.agent_reply}")
 
+            if turn_result.extracted_id: 
+                self.state.patient_id = str(turn_result.extracted_id)
+
             # State Updates based on extraction
             if turn_result.extracted_name: self.state.name = turn_result.extracted_name
             if turn_result.extracted_age: self.state.age = turn_result.extracted_age
             if turn_result.extracted_gender: self.state.gender = turn_result.extracted_gender
             if turn_result.extracted_contact: self.state.contact = turn_result.extracted_contact
             if turn_result.extracted_history: self.state.medical_history = turn_result.extracted_history
+            if turn_result.extracted_symptoms: 
+                self.state.current_symptoms = turn_result.extracted_symptoms
 
             # Check if registration just completed
             if turn_result.is_registered_now and not self.state.is_registered:
                 self.state.is_registered = True
+                
+                # Agar state mein pehle se patient_id nahi hai (yaani naya user hai)
                 if not self.state.patient_id:
-                    # New ID generation & CSV append logic
-
+                    # 1. Tool ka instance use karte hue data save karo
+                    csv_path = 'data/patients_data.csv'
+                    tool_result = csv_tool._run(
+                        path=csv_path,
+                        action="append",
+                        name=self.state.name,
+                        age=self.state.age,
+                        gender=self.state.gender,
+                        contact=str(self.state.contact) if self.state.contact else "",
+                        medical_history=self.state.medical_history
+                    )
                     
-                    print(f"⚠️ [SYSTEM]: New Patient Saved to CSV with ID: {self.state.patient_id}\n")
+                    # 2. Tool return karega: "Success: Registered with ID: X"
+                    # Hum string se sirf number extract kar ke state mein save kar lenge
+                    if "ID:" in tool_result:
+                        new_id = tool_result.split("ID:")[-1].strip()
+                        self.state.patient_id = new_id
+                        turn_result.extracted_id = new_id # Agent ke schema ko bhi sync kar diya
+                    
+                    print(f"🎉 [SYSTEM]: New Patient successfully saved to CSV Database!")
+                    print(f"⚠️ [SYSTEM]: Generated Patient ID is: {self.state.patient_id}\n")
 
             # Check if triage is done
             if turn_result.symptoms_finished:
                 self.state.symptoms_complete = True
                 self.state.doctor_type = turn_result.chosen_doctor_path
-
-        print(f"🏁 FLOW TRIAGE COMPLETE: Routing to {self.state.doctor_type}")
-        return self.state.doctor_type
     
 
 
