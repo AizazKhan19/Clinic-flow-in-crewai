@@ -36,9 +36,13 @@ class MyClinicStates(BaseModel):
     is_critical : bool = False         # Laboratory routing ke liye flag
     doctor : str = ""                  # the name of doctor who suggested tests
 
+    # Lab testting state
+    report : str = ""
+    is_report_ready : bool = False   # set to True when report is simulated
+
     
 
-#  After every iteration , Agent will output this  kind of dat
+#  After every iteration , Agent will output this  kind of data
 class ClinicExtractionSchema(BaseModel):
     # Registration Extraction
     extracted_id: Optional[str] = None
@@ -67,13 +71,15 @@ class DoctorDecisionState(BaseModel):
     suggested_tests: Optional[str] = Field(None, description="Provide specific tests (like ECG, CBC) if is_critical is True.")
     doctor_reply: str = Field(..., description="The direct comforting message to display to the patient.")
 
+class LabReportState(BaseModel):
+    is_report_generated : bool = Field(..., description= "set to True when test report is simulated, False if not simulated")
+    lab_report : str = Field(..., description= " Provide simulated lab report generated based on suggested tests")
 
 
 
 class ClinicFlow(Flow[MyClinicStates]):
 
     @start()
-
     def greet_and_validation(self):
         print("============================================================")
         print(" WELCOME TO THE AI CLINIC INFORMATION DESK ")
@@ -110,9 +116,37 @@ class ClinicFlow(Flow[MyClinicStates]):
                 Current System States: {self.state.model_dump()}
 
                 STRICT INSTRUCTIONS:
-                1. ID CHECK: If user provided an ID and 'is_registered' is False, execute CSVReadWriteTool with that ID string. Look closely at the tool output. If the tool finds a match for that specific ID row, mark 'is_registered_now' as True, extract all details from that row, and map the ID to 'extracted_id'.
-                2. REGISTRATION: If ID not found or tool returns empty/no match, ask for Name, Age, Gender, Contact, medical history (optional/  if have). Extract whatever they provide in the latest message. If all provided, set 'is_registered_now' to True. else ask for remaining things and then when you got all the things then set 'is_registered_now' to True.
-                3. SYMPTOMS: If patient is registered/found, ask for symptoms. Analyze carefully. If vague, ask follow-ups. If 100% certain, set 'symptoms_finished' to True and 'chosen_doctor_path' to one of: 'cardiologist_path', 'orthopedic_path', 'general_path'.
+
+                1. ID CHECK: If user provided an ID and 'is_registered' is False, 
+                execute CSVReadWriteTool with that ID string. Look closely at the tool output. 
+                If the tool finds a match for that specific ID row, mark 'is_registered_now' as True, 
+                extract all details from that row and store them in desired states.
+                For example store name in 'extracted_name', age in 'extracted_age',
+                gender in 'extracted_gender', contact in 'extracted_contact' and history in 'extracted_history'.
+                and map the ID to 'extracted_id'.
+
+                2. REGISTRATION: If ID not found then:
+
+                    i. Collect mandatory information including 'Name', 'Age', 'Gender', 'Contact',
+                    medical history (optional/  if have).
+                    ii. You must clearly check what user is providing, if user do not have medical history then you can proceed
+                    registration without it BUT if user do not have , name, contact, age, gender or even one of these
+                    things then you are not allowed to proceed registration. 
+                    iii. You must proceed and registered user successfully when user you have user's name, age, gender and contact.
+                    and if user do not have even one of these ( name, age, contact, gender). Then you MUST NOT PROCEED WITH 
+                    REGISTRATION. 
+                    iv. Extract whatever they provide in the latest message but keep in mind that what is relevant 
+                    for registration (as discussed above ).
+                    v. If all provided, set 'is_registered_now' to True. else ask for remaining things and then, 
+                     when you got all the things then set 'is_registered_now' to True.
+
+                3. SYMPTOMS: If patient is registered/found :
+
+                  i. Ask for symptoms.
+                  ii. Analyze carefully. If vague, ask follow-ups questions to clearly understand symptoms. 
+                  iii. If 100% clear about symptoms then, set 'symptoms_finished' to True and 'chosen_doctor_path' 
+                  to one of: 'cardiologist_path', 'orthopedic_path', 'general_path'.
+
                 4. BOUNDARY: Stay strictly within clinic domain. Politely refuse politics/jokes etc.
                 5. Provide your next natural response in 'agent_reply'.""",
                 expected_output="Structured chat turn analysis and data extraction.",
@@ -173,12 +207,10 @@ class ClinicFlow(Flow[MyClinicStates]):
                 self.state.doctor_type = turn_result.chosen_doctor_path
     
 
-
-    # ------------------------------------------------------------
-    # 2. ROUTER: Yeh tay karega ke flow kis doctor ke paas jayega
-    # ------------------------------------------------------------
+    # ROUTER: Yeh tay karega ke flow kis doctor ke paas jayega    
     @router(greet_and_validation)
     def route_to_specialist(self)-> Literal["cardiologist", "orthopedic", "general"]:
+
         if self.state.doctor_type == "cardiologist_path":
             return "cardiologist"
         elif self.state.doctor_type == "orthopedic_path":
@@ -186,155 +218,357 @@ class ClinicFlow(Flow[MyClinicStates]):
         else:
             return "general"
 
-    # ------------------------------------------------------------
-    # 3. LISTENERS (DOCTOR NODES): Jin par router bhejega
-    # ------------------------------------------------------------
-    @listen("cardiologist")
-    def cardiologist_node(self) ->Literal['test_required',]:
+    
+    # LISTENERS (DOCTOR NODES): Jin par router bhejega
+    
+    @listen("cardiologist")   
+    def cardiologist_node(self):
 
-        print("\n--- WELCOME TO THE CARDIOLOGY DEPARTMENT ---")
-        print(f"[SYSTEM]: Dr. Heart Agent is analyzing symptoms for {self.state.name}...\n")
-
+        
+        
+        # 1. Unified Agent Definition (Handles both Initial Diagnosis and Lab Review)
         cardio_agent = Agent(
             role='Cardiologist Agent',
-            goal="To give treatment or recommend tests based on patient symptoms analysis if its realed to heart.",
-            backstory="""You are a Cardiologist Doctor specialized in heart issues with 30+ years of experience. 
-            You carefully analyze symptoms and decide whether the condition is 'normal' (needs medicine/diet) 
-            or 'critical' (needs laboratory tests).""",
+            goal="To analyze patient symptoms, recommend diagnostic laboratory tests if critical, or review generated lab reports to provide final clinical treatment.",
+            backstory="""You are a veteran Cardiologist Doctor with 30+ years of experience.
+            You excel at two main stages:
+            Stage 1: Initially diagnosing patient chest pains/symptoms to see if they are critical or normal.
+            Stage 2: Thoroughly inspecting technical medical lab reports once generated, mapping results to symptoms, and issuing final prescriptions.""",
             llm=llm,
             verbose=False
         )
 
-        cardio_task = Task(
-            description=f"""Analyze the patient's context deeply:
-            Patient Name: {self.state.name}
-            Current Symptoms: {self.state.current_symptoms}
-            Medical History: {self.state.medical_history}
-            
-            STRICT RULES:
-            1. If symptoms indicate severe distress, radiating chest pain, or high-risk history, set 'is_critical' to True and list required labs in 'suggested_tests'.
-            2. If symptoms are stable or routine, set 'is_critical' to False and provide data in 'prescription_or_diet'.
-            3. Write your final direct response to the patient in 'doctor_reply'.""",
-            expected_output="Structured critical assessment and medical guidance.",
-            agent=cardio_agent,
-            output_pydantic=DoctorDecisionState
-        )
-
-        crew = Crew(agents=[cardio_agent], tasks=[cardio_task], verbose=False)
-        result = crew.kickoff().pydantic
-
-
+        # Sync doctor identity globally for the lab tracking
         self.state.doctor = 'Cardiologist Doctor'
-        # states synchronization
 
-        if result.is_critical:
-            self.state.required_tests = result.suggested_tests
-            print(f'Cardiologist doctor reply > {result.doctor_reply}')
-            return "test_required"
+        
+        # STAGE 2: Lab Report Review Flow (Triggers if report exists)
+        
+        if self.state.report:
+            print("\n--- WELCOME BACK TO THE CARDIOLOGY DEPARTMENT ---\n")
+            print(f"[SYSTEM]: Dr. Heart Agent is now reviewing your Lab Report...\n")
+            
+            
+            # Simple review task returning a raw text prescription string
+            cardio_task = Task(
+                description=f"""Review this simulated lab report deeply:
+                Patient Name: {self.state.name}
+                Current Symptoms: {self.state.current_symptoms}
+                Generated Lab Report Data: '{self.state.report}'
+                
+                Based on these report values, provide the final medicine prescription, dosage, and strict cardiac diet plan.""",
+                expected_output="Final clinical medicine prescription and diet layout based on lab results.",
+                agent=cardio_agent
+            )
+            
+            # Execute Review Task and save final text to state
+            self.state.prescription = str(Crew(agents=[cardio_agent], tasks=[cardio_task], verbose=False).kickoff())
+            
+            
+            
+
+        
+        # STAGE 1: Initial Symptom Diagnosis Flow (Triggers on first visit)
+        
         else:
-            self.state.prescription = result.prescription_or_diet
-            print(f' Cardiologist Doctor Prescription : {result.doctor_reply}')
+
+            print("\n--- WELCOME TO THE CARDIOLOGY DEPARTMENT ---\n")
+            print(f"[SYSTEM]: Dr. Heart Agent is analyzing initial symptoms for {self.state.name}...\n")
+            
+            # Structured task returning Pydantic schema for routing/extraction
+            cardio_task = Task(
+                description=f"""Analyze the patient's context deeply:
+                Patient Name: {self.state.name}
+                Current Symptoms: {self.state.current_symptoms}
+                Medical History: {self.state.medical_history}
+                
+                STRICT RULES:
+                1. If symptoms indicate severe distress, radiating chest pain, or high-risk history, 
+                set 'is_critical' to True and list required labs in 'suggested_tests'.
+                2. If symptoms are mild or seems like minor symptoms like not dangerous, 
+                set 'is_critical' to False and provide prescription to that mild symptoms in 'prescription_or_diet'.
+                3. If 'is_critical' is false which means mild symptoms then :
+                i. Write prescription to the patient in 'doctor_reply' using prescription which you put in 
+                'prescription_or_diet'.
+                
+                4. If 'is_Critical' is True which means severe symptoms or symptoms seems dangerous/critical then:
+                i. Write your direct response to the patient in 'doctor_reply' saying such as your symptoms seems
+                critical so i suggest you some tests ( which you put in 'suggested_test). You first
+                do that and then i will see your report and will give my remarks on.""",
+                expected_output="Structured critical assessment and medical guidance.",
+                agent=cardio_agent,
+                output_pydantic=DoctorDecisionState
+            )
+
+            # Execute Initial Assessment Crew
+            crew = Crew(agents=[cardio_agent], tasks=[cardio_task], verbose=False)
+            result = crew.kickoff().pydantic
+
+            # Dynamic Path Branching
+            if result.is_critical:
+                self.state.required_tests = result.suggested_tests
+                print(f'Cardiologist Doctor Reply > {result.doctor_reply}')
+                print(f'[SYSTEM]: Test ordered: {self.state.required_tests}. Routing to Lab...\n')
+                
+            else:
+                self.state.prescription = result.prescription_or_diet
+                print(f'Cardiologist Doctor Reply > {result.doctor_reply}\n')
+
+            
 
         
 
+    
     @listen("orthopedic")
     def orthopedic_node(self):
 
-        print("\n--- WELCOME TO THE ORTHOPEDIC DEPARTMENT ---")
-        print(f"[SYSTEM]: Dr. Bone Agent is analyzing symptoms for {self.state.name}...\n")
-
+        
+        
+        # 1. Unified Agent Definition (Handles both Initial Assessment and Lab Review)
         ortho_agent = Agent(
             role='Orthopedic Agent',
-            goal="To give treatment or recommend tests based on patient symptoms analysis if its related to bones.",
-            backstory="""You are a Orthopedic Doctor specialized in Bone issues with 30+ years of experience. 
-            You carefully analyze symptoms and decide whether the condition is 'normal' (needs medicine/diet) 
-            or 'critical' (needs laboratory tests).""",
+            goal="To analyze patient bone and joint symptoms, recommend diagnostic laboratory or imaging tests if critical, or review generated lab reports to provide final clinical treatment.",
+            backstory="""You are a Specialized Orthopedic Doctor with 30+ years of experience.
+            You excel at two main stages:
+            Stage 1: Initially diagnosing patient bone/joint trauma or pain to see if they are critical or normal.
+            Stage 2: Thoroughly inspecting technical medical lab or imaging reports once generated, mapping results to symptoms, and issuing final prescriptions.""",
             llm=llm,
             verbose=False
         )
 
-        ortho_task = Task(
-            description=f"""Analyze the patient's context deeply:
-            Patient Name: {self.state.name}
-            Current Symptoms: {self.state.current_symptoms}
-            Medical History: {self.state.medical_history}
-            
-            STRICT RULES:
-            1. If symptoms indicate severe distress, radiating bone pain, or high-risk history, set 'is_critical' to True and list required labs in 'suggested_tests'.
-            2. If symptoms are stable or routine, set 'is_critical' to False and provide data in 'prescription_or_diet'.
-            3. Write your final direct response to the patient in 'doctor_reply'.""",
-            expected_output="Structured critical assessment and medical guidance.",
-            agent=ortho_agent,
-            output_pydantic=DoctorDecisionState
-        )
-
-        crew = Crew(agents=[ortho_agent], tasks=[ortho_task], verbose=False)
-        result = crew.kickoff().pydantic
-
+        # Sync doctor identity globally for the lab tracking
         self.state.doctor = 'Orthopedic Doctor'
 
-        if result.is_critical:
-            self.state.required_tests = result.suggested_tests
-            print(f'Orthopedic doctor reply > {result.doctor_reply}')
-            return "test_required"
+        
+        # Lab Report Review Flow (Triggers if report exists)
+        
+        if self.state.report:
+            print("\n--- WELCOME BACK TO THE ORTHOPEDIC DEPARTMENT ---\n")
+            print(f"[SYSTEM]: Dr. Bone Agent is now reviewing your Lab Report...\n")
+            
+            # Simple review task returning a raw text prescription string
+            ortho_task = Task(
+                description=f"""Review this simulated lab report deeply:
+                Patient Name: {self.state.name}
+                Current Symptoms: {self.state.current_symptoms}
+                Generated Lab Report Data: '{self.state.report}'
+                
+                Based on these report values, provide the final medicine prescription, physical therapy layout, and recovery advice.""",
+                expected_output="Final clinical medicine prescription and bone recovery layout based on lab results.",
+                agent=ortho_agent
+            )
+            
+            # Execute Review Task and save final text to state
+            self.state.prescription = str(Crew(agents=[ortho_agent], tasks=[ortho_task], verbose=False).kickoff())
+            
+            # print(f"[FINAL ORTHOPEDIC PRESCRIPTION]:\n{self.state.prescription}\n")
+            # return  # Exits the loop cleanly
+
+        
+        # Initial Symptom Diagnosis Flow (Triggers on first visit)
+        
         else:
-            self.state.prescription = result.prescription_or_diet
-            print(f' Orthopedic Doctors Prescription : {result.doctor_reply}')
+            print("\n--- WELCOME TO THE ORTHOPEDIC DEPARTMENT ---\n")
+            print(f"[SYSTEM]: Dr. Bone Agent is analyzing initial symptoms for {self.state.name}...\n")
+            
+            # Structured task returning Pydantic schema for routing/extraction
+            ortho_task = Task(
+                description=f"""Analyze the patient's context deeply:
+                Patient Name: {self.state.name}
+                Current Symptoms: {self.state.current_symptoms}
+                Medical History: {self.state.medical_history}
+                
+                STRICT RULES:
+                1. If symptoms indicate severe distress, radiating bone pain, suspected fracture, or high-risk history, 
+                set 'is_critical' to True and list required scans/labs (like X-Ray, MRI, etc.) in 'suggested_tests'.
+                2. If symptoms are mild or seems like minor symptoms like routine muscle strain or not dangerous, 
+                set 'is_critical' to False and provide data in 'prescription_or_diet'.
+                3. If 'is_critical' is false which means mild symptoms then :
+                i. Write your prescription to the patient in 'doctor_reply' using prescription which you put in 
+                'prescription_or_diet'.
+                
+                4. If 'is_critical' is True which means severe symptoms or symptoms seems dangerous/critical then:
+                i. Write your direct response to the patient in 'doctor_reply' saying such as your symptoms seems
+                critical so i suggest you some tests ( which you put in 'suggested_test'). You first
+                do that and then i will see your report and will give my remarks on.""",
+                expected_output="Structured critical assessment and medical guidance.",
+                agent=ortho_agent,
+                output_pydantic=DoctorDecisionState
+            )
+
+            # Execute Initial Assessment Crew
+            crew = Crew(agents=[ortho_agent], tasks=[ortho_task], verbose=False)
+            result = crew.kickoff().pydantic
+
+            # Dynamic Path Branching
+            if result.is_critical:
+                self.state.required_tests = result.suggested_tests
+                print(f'Orthopedic Doctor Reply > {result.doctor_reply}')
+                print(f'[SYSTEM]: Test ordered: {self.state.required_tests}. Routing to Lab...\n')
+                
+            else:
+                self.state.prescription = result.prescription_or_diet
+                print(f'Orthopedic Doctor Reply > {result.doctor_reply}\n')
 
 
 
         
 
+    
     @listen("general")
     def general_node(self):
-        print("\n--- WELCOME TO THE GENERAL DEPARTMENT ---")
-        print(f"[SYSTEM]: Dr. General Agent is analyzing symptoms for {self.state.name}...\n")
 
+        
+        
+        # 1. Unified Agent Definition (Handles both Initial Assessment and Lab Review)
         general_agent = Agent(
             role='General Agent',
-            goal="To give treatment or recommend tests based on patient symptoms analysis if its related to general health.",
-            backstory="""You are a General Physician Doctor specialized in general issues with 30+ years of experience. 
-            You carefully analyze symptoms and decide whether the condition is 'normal' (needs medicine/diet) 
-            or 'critical' (needs laboratory tests).""",
+            goal="To analyze patient general health symptoms, recommend diagnostic laboratory tests if critical, or review generated lab reports to provide final clinical treatment.",
+            backstory="""You are a veteran General Physician Doctor with 30+ years of experience.
+            You excel at two main stages:
+            Stage 1: Initially diagnosing patient general health symptoms to see if they are critical or normal.
+            Stage 2: Thoroughly inspecting technical medical lab reports once generated, mapping results to symptoms, and issuing final prescriptions.""",
             llm=llm,
             verbose=False
         )
 
-        general_task = Task(
-            description=f"""Analyze the patient's context deeply:
-            Patient Name: {self.state.name}
-            Current Symptoms: {self.state.current_symptoms}
-            Medical History: {self.state.medical_history}
-            
-            STRICT RULES:
-            1. If symptoms indicate severe distress, or high-risk history, set 'is_critical' to True and list required labs in 'suggested_tests'.
-            2. If symptoms are stable or routine, set 'is_critical' to False and provide data in 'prescription_or_diet'.
-            3. Write your final direct response to the patient in 'doctor_reply'.""",
-            expected_output="Structured critical assessment and medical guidance.",
-            agent=general_agent,
-            output_pydantic=DoctorDecisionState
-        )
-
-        crew = Crew(agents=[general_agent], tasks=[general_task], verbose=False)
-        result = crew.kickoff().pydantic
-
+        # Sync doctor identity globally for the lab tracking
         self.state.doctor = 'General Physician'
+
         
-        if result.is_critical:
-            self.state.required_tests = result.suggested_tests
-            print(f'General doctor reply > {result.doctor_reply}')
-            return "test_required"
+        # Lab Report Review Flow (Triggers if report exists)
+        
+        if self.state.report:
+            print("\n--- WELCOME BACK TO THE GENERAL DEPARTMENT ---\n")
+            print(f"[SYSTEM]: Dr. General Agent is now reviewing your Lab Report...\n")
+            
+            # Simple review task returning a raw text prescription string
+            general_task = Task(
+                description=f"""Review this simulated lab report deeply:
+                Patient Name: {self.state.name}
+                Current Symptoms: {self.state.current_symptoms}
+                Generated Lab Report Data: '{self.state.report}'
+                
+                Based on these report values, provide the final medicine prescription, dosage, and general healthcare advice.""",
+                expected_output="Final clinical medicine prescription and primary care layout based on lab results.",
+                agent=general_agent
+            )
+            
+            # Execute Review Task and save final text to state
+            self.state.prescription = str(Crew(agents=[general_agent], tasks=[general_task], verbose=False).kickoff())
+            
+            # print(f"[FINAL GENERAL PRESCRIPTION]:\n{self.state.prescription}\n")
+            # return  # Exits the loop cleanly
+
+        
+        # Initial Symptom Diagnosis Flow (Triggers on first visit)
+        
         else:
-            self.state.prescription = result.prescription_or_diet
-            print(f' General Doctor Prescription : {result.doctor_reply}')
-            self.state.doctor = 'General Physician'
+            print("\n--- WELCOME TO THE GENERAL DEPARTMENT ---\n")
+            print(f"[SYSTEM]: Dr. General Agent is analyzing initial symptoms for {self.state.name}...\n")
+            
+            # Structured task returning Pydantic schema for routing/extraction
+            general_task = Task(
+                description=f"""Analyze the patient's context deeply:
+                Patient Name: {self.state.name}
+                Current Symptoms: {self.state.current_symptoms}
+                Medical History: {self.state.medical_history}
+                
+                STRICT RULES:
+                1. If symptoms indicate severe distress, high-risk systemic conditions, or serious potential complications, 
+                set 'is_critical' to True and list required labs (like CBC, Chest X-Ray, etc.) in 'suggested_tests'.
+                2. If symptoms are mild or seems like minor symptoms like fever, runny nose, sore throat, or routine seasonal diseases, 
+                set 'is_critical' to False and provide data in 'prescription_or_diet'.
+                3. If 'is_critical' is false which means mild symptoms then :
+                i. Write write prescription to the patient in 'doctor_reply' using prescription which you put in 
+                'prescription_or_diet'.
+                
+                4. If 'is_critical' is True which means severe symptoms or symptoms seems dangerous/critical then:
+                i. Write your direct response to the patient in 'doctor_reply' saying such as your symptoms seems
+                critical so i suggest you some tests ( which you put in 'suggested_test'). You first
+                do that and then i will see your report and will give my remarks on.""",
+                expected_output="Structured critical assessment and medical guidance.",
+                agent=general_agent,
+                output_pydantic=DoctorDecisionState
+            )
+
+            # Execute Initial Assessment Crew
+            crew = Crew(agents=[general_agent], tasks=[general_task], verbose=False)
+            result = crew.kickoff().pydantic
+
+            # Dynamic Path Branching
+            if result.is_critical:
+                self.state.required_tests = result.suggested_tests
+                print(f'General Doctor Reply > {result.doctor_reply}')
+                print(f'[SYSTEM]: Test ordered: {self.state.required_tests}. Routing to Lab...\n')
+                
+            else:
+                self.state.prescription = result.prescription_or_diet
+                print(f'General Doctor Reply > {result.doctor_reply}\n')
 
 
     # lab fucntion
-    @listen(or_(cardiologist_node, orthopedic_node, general_node))
-    def lab(self):
-        print(f'Performing prescribed tests in Lab : { self.state.required_tests} \n')
-        print(f'{self.state.doctor} Prescribed the Tests')
+    @router(or_(cardiologist_node, orthopedic_node, general_node))
+    def lab(self) -> Literal["cardiologist", "orthopedic", "general", "exit_flow"]:
+
+        # Condition A: Agar doctor ne test order kiya hai AUR report abhi tak nahi bani
+        if self.state.required_tests and not self.state.report:
+            print(f'Performing prescribed tests in Lab : { self.state.required_tests} \n')
+            print(f'{self.state.doctor} Prescribed the Tests')
+
+            lab_agent = Agent(
+                role = "Laboratory Agent ",
+                goal = "To simulate the test based on suggested tests by doctor",
+                backstory = (
+                    """ You are a professional Laboratory Agent specialized in performing suggested tests by doctors.
+                     You have 30+ experience of performing tests. """
+                ),
+                llm = llm,
+                verbose = False,
+            )
+
+            lab_task = Task(
+                description= f"""Your Task is to simulate the suggested tests suggested
+                by doctor agent. 
+                Here are the suggested test or test of which you have to simulate and generate a realistic test
+                report. {self.state.required_tests}.
+                
+                Instructions to perform task:
+                1. Only simulate a test report of the tests suggested by doctors which i mentioned above.
+                2. Your test report simulation must look like a real test report.
+                3. When you generate/ simulate the tests then stores the simulated report in 'lab_report' and then
+                set 'is_report_generated' to True
+                4. You do not have to give reply or prescription to user.
+                5.Your only task is to simulate tests which are suggested.
+                6. In test report, use data like name, age, gender from following states:
+                i. use name in report from {self.state.name}.
+                ii. Use age in report from {self.state.age}.
+                iii. Use gender in report from {self.state.gender}.
+                """,
+                expected_output = "A text saying tests conducted",
+                agent= lab_agent,
+                output_pydantic= LabReportState 
+            )
+
+            crew = Crew( agents=[lab_agent], tasks=[lab_task], verbose=False)
+            result = crew.kickoff().pydantic
+
+            if result.is_report_generated:
+                self.state.report = result.lab_report
+                print(f'Lab Agent Generated Report : {result.lab_report} suggested by Doctor {self.state.doctor} \n')
+                
+                # Dynamic Routing: Wapas usi doctor ke paas bhejo jisne test prescribe kiya tha
+                if self.state.doctor_type == "cardiologist_path":
+                    return "cardiologist"
+                elif self.state.doctor_type == "orthopedic_path":
+                    return "orthopedic"
+                else:
+                    return "general"
+        
+        # Condition B: Agar report pehle se maujood hai (yaani doctor report dekh chuka hai) ya case normal tha
+        else:
+            return "exit_flow"
+        
     
 
 flow = ClinicFlow()
