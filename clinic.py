@@ -570,6 +570,11 @@ class ClinicFlow(Flow[MyClinicStates]):
             return "exit_flow"
         
     
+    @listen("exit_flow")
+    def flow_exit(self):
+        print(f'The Flow is Terminated Successfully ')
+        
+    
 
 flow = ClinicFlow()
 
