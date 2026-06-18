@@ -263,7 +263,7 @@ class ClinicFlow(Flow[MyClinicStates]):
             
             # Execute Review Task and save final text to state
             self.state.prescription = str(Crew(agents=[cardio_agent], tasks=[cardio_task], verbose=False).kickoff())
-            
+            print(f"[CARDIOLOGIST DOCTOR'S PRESCRIPTION AFTER ASSESSING THE REPORT]:\n{self.state.prescription}\n")
             
             
 
@@ -361,7 +361,7 @@ class ClinicFlow(Flow[MyClinicStates]):
             # Execute Review Task and save final text to state
             self.state.prescription = str(Crew(agents=[ortho_agent], tasks=[ortho_task], verbose=False).kickoff())
             
-            # print(f"[FINAL ORTHOPEDIC PRESCRIPTION]:\n{self.state.prescription}\n")
+            print(f"[ORTHOPEDIC DOCTOR'S PRESCRIPTION AFTER ASSESSING THE REPORT]:\n{self.state.prescription}\n")
             # return  # Exits the loop cleanly
 
         
@@ -457,7 +457,7 @@ class ClinicFlow(Flow[MyClinicStates]):
             # Execute Review Task and save final text to state
             self.state.prescription = str(Crew(agents=[general_agent], tasks=[general_task], verbose=False).kickoff())
             
-            # print(f"[FINAL GENERAL PRESCRIPTION]:\n{self.state.prescription}\n")
+            print(f"[GENERAL DOCTOR'S PRESCRIPTION AFTER ASSESSING THE REPORT]:\n{self.state.prescription}\n")
             # return  # Exits the loop cleanly
 
         
