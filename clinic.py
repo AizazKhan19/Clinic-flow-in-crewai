@@ -120,7 +120,7 @@ class ClinicFlow(Flow[MyClinicStates]):
                 1. ID CHECK: If user provided an ID and 'is_registered' is False, 
                 execute CSVReadWriteTool with that ID string. Look closely at the tool output. 
                 If the tool finds a match for that specific ID row, mark 'is_registered_now' as True, 
-                extract all details from that row and store them in desired states.
+                extract all details from that row and store them in desired states then ask about symptoms.
                 For example store name in 'extracted_name', age in 'extracted_age',
                 gender in 'extracted_gender', contact in 'extracted_contact' and history in 'extracted_history'.
                 and map the ID to 'extracted_id'.
