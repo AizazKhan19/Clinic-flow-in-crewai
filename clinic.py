@@ -30,18 +30,17 @@ class MyClinicStates(BaseModel):
     doctor_type : str = ""            # Isme final path string save hogi
 
     # Doctor Decision states global
-    doctor_notes : str = ""            # Doctor ke remarks (Normal ya Critical)
+    # doctor_notes : str = ""            # Doctor ke remarks (Normal ya Critical)
     prescription : str = ""            # Agar normal hua toh medicine/diet yahan aayegi
     required_tests : str = ""          # Agar critical hua toh tests yahan aayenge
     is_critical : bool = False         # Laboratory routing ke liye flag
-    doctor : str = ""                  # the name of doctor who suggested tests
+    # doctor : str = ""                  # the name of doctor who suggested tests
 
     # Lab testting state
     report : str = ""
     is_report_ready : bool = False   # set to True when report is simulated
 
     
-
 #  After every iteration , Agent will output this  kind of data
 class ClinicExtractionSchema(BaseModel):
     # Registration Extraction
@@ -76,7 +75,6 @@ class LabReportState(BaseModel):
     lab_report : str = Field(..., description= " Provide simulated lab report generated based on suggested tests")
 
 
-
 class ClinicFlow(Flow[MyClinicStates]):
 
     @start()
@@ -92,7 +90,7 @@ class ClinicFlow(Flow[MyClinicStates]):
 
         # Main Loop: Jab tak doctor route nahi milta chat chalti rahegi
         while not self.state.symptoms_complete:
-            user_msg = input("User Input > ")
+            user_msg = str(input("User Input > "))
             chat_history.append(f"User: {user_msg}")
 
             # 1. Agent Definition (Aap ka design)
@@ -120,8 +118,12 @@ class ClinicFlow(Flow[MyClinicStates]):
                 1. ID CHECK: If user provided an ID and 'is_registered' is False, 
                 execute CSVReadWriteTool with that ID string. Look closely at the tool output. 
                 If the tool finds a match for that specific ID row, mark 'is_registered_now' as True, 
-                extract all details from that row and store them in desired states then ask about symptoms.
-                For example store name in 'extracted_name', age in 'extracted_age',
+                extract all details from that row and save them in desired states then must ask about symptoms.
+                Whenever you are matching user's provided id using tool, then do not message to user saying such as
+                wait you have provided id now let me take a look if it is found or not? instead when you found it then 
+                tell user that you found it by mentioning user's name which you map from already present user's
+                data against id in csv file.
+                For example save name in 'extracted_name', age in 'extracted_age',
                 gender in 'extracted_gender', contact in 'extracted_contact' and history in 'extracted_history'.
                 and map the ID to 'extracted_id'.
 
@@ -138,14 +140,14 @@ class ClinicFlow(Flow[MyClinicStates]):
                     iv. Extract whatever they provide in the latest message but keep in mind that what is relevant 
                     for registration (as discussed above ).
                     v. If all provided, set 'is_registered_now' to True. else ask for remaining things and then, 
-                     when you got all the things then set 'is_registered_now' to True.
+                     when you got all the things then set 'is_registered_now' to True. 
 
                 3. SYMPTOMS: If patient is registered/found :
 
                   i. Ask for symptoms.
                   ii. Analyze carefully. If vague, ask follow-ups questions to clearly understand symptoms. 
                   iii. If 100% clear about symptoms then, set 'symptoms_finished' to True and 'chosen_doctor_path' 
-                  to one of: 'cardiologist_path', 'orthopedic_path', 'general_path'.
+                  to one of: 'cardiologist', 'orthopedic', 'general'.
 
                 4. BOUNDARY: Stay strictly within clinic domain. Politely refuse politics/jokes etc.
                 5. Provide your next natural response in 'agent_reply'.""",
@@ -179,6 +181,7 @@ class ClinicFlow(Flow[MyClinicStates]):
                 
                 # Agar state mein pehle se patient_id nahi hai (yaani naya user hai)
                 if not self.state.patient_id:
+                    print("--- Manually appending record in csv file...")
                     # 1. Tool ka instance use karte hue data save karo
                     csv_path = 'data/patients_data.csv'
                     tool_result = csv_tool._run(
@@ -211,9 +214,9 @@ class ClinicFlow(Flow[MyClinicStates]):
     @router(greet_and_validation)
     def route_to_specialist(self)-> Literal["cardiologist", "orthopedic", "general"]:
 
-        if self.state.doctor_type == "cardiologist_path":
+        if self.state.doctor_type == "cardiologist":
             return "cardiologist"
-        elif self.state.doctor_type == "orthopedic_path":
+        elif self.state.doctor_type == "orthopedic":
             return "orthopedic"
         else:
             return "general"
@@ -224,8 +227,6 @@ class ClinicFlow(Flow[MyClinicStates]):
     @listen("cardiologist")   
     def cardiologist_node(self):
 
-        
-        
         # 1. Unified Agent Definition (Handles both Initial Diagnosis and Lab Review)
         cardio_agent = Agent(
             role='Cardiologist Agent',
@@ -239,7 +240,7 @@ class ClinicFlow(Flow[MyClinicStates]):
         )
 
         # Sync doctor identity globally for the lab tracking
-        self.state.doctor = 'Cardiologist Doctor'
+        # self.state.doctor = 'Cardiologist Doctor'
 
         
         # STAGE 2: Lab Report Review Flow (Triggers if report exists)
@@ -322,8 +323,6 @@ class ClinicFlow(Flow[MyClinicStates]):
     @listen("orthopedic")
     def orthopedic_node(self):
 
-        
-        
         # 1. Unified Agent Definition (Handles both Initial Assessment and Lab Review)
         ortho_agent = Agent(
             role='Orthopedic Agent',
@@ -337,7 +336,7 @@ class ClinicFlow(Flow[MyClinicStates]):
         )
 
         # Sync doctor identity globally for the lab tracking
-        self.state.doctor = 'Orthopedic Doctor'
+        # self.state.doctor = 'Orthopedic Doctor'
 
         
         # Lab Report Review Flow (Triggers if report exists)
@@ -411,14 +410,8 @@ class ClinicFlow(Flow[MyClinicStates]):
                 print(f'Orthopedic Doctor Reply > {result.doctor_reply}\n')
 
 
-
-        
-
-    
     @listen("general")
     def general_node(self):
-
-        
         
         # 1. Unified Agent Definition (Handles both Initial Assessment and Lab Review)
         general_agent = Agent(
@@ -433,7 +426,7 @@ class ClinicFlow(Flow[MyClinicStates]):
         )
 
         # Sync doctor identity globally for the lab tracking
-        self.state.doctor = 'General Physician'
+        # self.state.doctor = 'General Physician'
 
         
         # Lab Report Review Flow (Triggers if report exists)
@@ -514,7 +507,7 @@ class ClinicFlow(Flow[MyClinicStates]):
         # Condition A: Agar doctor ne test order kiya hai AUR report abhi tak nahi bani
         if self.state.required_tests and not self.state.report:
             print(f'Performing prescribed tests in Lab : { self.state.required_tests} \n')
-            print(f'{self.state.doctor} Prescribed the Tests')
+            print(f'{self.state.doctor_type} Prescribed the Tests')
 
             lab_agent = Agent(
                 role = "Laboratory Agent ",
@@ -555,12 +548,12 @@ class ClinicFlow(Flow[MyClinicStates]):
 
             if result.is_report_generated:
                 self.state.report = result.lab_report
-                print(f'Lab Agent Generated Report : {result.lab_report} suggested by Doctor {self.state.doctor} \n')
+                print(f'Lab Agent Generated Report : {result.lab_report} suggested by Doctor {self.state.doctor_type.upper()} \n')
                 
                 # Dynamic Routing: Wapas usi doctor ke paas bhejo jisne test prescribe kiya tha
-                if self.state.doctor_type == "cardiologist_path":
+                if self.state.doctor_type == "cardiologist":
                     return "cardiologist"
-                elif self.state.doctor_type == "orthopedic_path":
+                elif self.state.doctor_type == "orthopedic":
                     return "orthopedic"
                 else:
                     return "general"
@@ -577,6 +570,5 @@ class ClinicFlow(Flow[MyClinicStates]):
     
 
 flow = ClinicFlow()
-
 flow.kickoff()
 flow.plot()
