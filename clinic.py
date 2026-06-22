@@ -6,6 +6,26 @@ from configuration import llm
 from crewai_tools import CSVSearchTool
 from typing import Optional, Literal, Type
 from custom_tool import CSVReadWriteTool
+from crewai.mcp import MCPServerStdio
+import os
+import dotenv
+
+dotenv.load_dotenv()
+
+# slack server initialization
+
+slack_server = MCPServerStdio(
+    command='npx',
+    args=['-y', ' @modelcontextprotocol/server-slack '],
+
+    env={
+
+        "SLACK_BOT_TOKEN": os.getenv("SLACK_BOT_TOKEN"),
+
+        "SLACK_TEAM_ID": os.getenv("SLACK_TEAM_ID")
+
+}
+)
 
 # tool's object initialization
 csv_tool = CSVReadWriteTool()
