@@ -16,7 +16,7 @@ dotenv.load_dotenv()
 
 slack_server = MCPServerStdio(
     command='npx',
-    args=['-y', ' @modelcontextprotocol/server-slack '],
+    args=['-y', '@modelcontextprotocol/server-slack'],
 
     env={
 
@@ -50,11 +50,11 @@ class MyClinicStates(BaseModel):
     doctor_type : str = ""            # Isme final path string save hogi
 
     # Doctor Decision states global
-    # doctor_notes : str = ""            # Doctor ke remarks (Normal ya Critical)
+             
     prescription : str = ""            # Agar normal hua toh medicine/diet yahan aayegi
     required_tests : str = ""          # Agar critical hua toh tests yahan aayenge
     is_critical : bool = False         # Laboratory routing ke liye flag
-    # doctor : str = ""                  # the name of doctor who suggested tests
+    
 
     # Lab testting state
     report : str = ""
@@ -256,12 +256,9 @@ class ClinicFlow(Flow[MyClinicStates]):
             Stage 1: Initially diagnosing patient chest pains/symptoms to see if they are critical or normal.
             Stage 2: Thoroughly inspecting technical medical lab reports once generated, mapping results to symptoms, and issuing final prescriptions.""",
             llm=llm,
+            mcps= [slack_server],
             verbose=False
         )
-
-        # Sync doctor identity globally for the lab tracking
-        # self.state.doctor = 'Cardiologist Doctor'
-
         
         # STAGE 2: Lab Report Review Flow (Triggers if report exists)
         
@@ -269,24 +266,20 @@ class ClinicFlow(Flow[MyClinicStates]):
             print("\n--- WELCOME BACK TO THE CARDIOLOGY DEPARTMENT ---\n")
             print(f"[SYSTEM]: Dr. Heart Agent is now reviewing your Lab Report...\n")
             
-            
-            # Simple review task returning a raw text prescription string
-            cardio_task = Task(
-                description=f"""Review this simulated lab report deeply:
-                Patient Name: {self.state.name}
-                Current Symptoms: {self.state.current_symptoms}
-                Generated Lab Report Data: '{self.state.report}'
-                
-                Based on these report values, provide the final medicine prescription, dosage, and strict cardiac diet plan.""",
-                expected_output="Final clinical medicine prescription and diet layout based on lab results.",
-                agent=cardio_agent
+
+            slack_post = Task(
+                description = f"""
+                Your task is to send patient's current sympotoms : {self.state.current_symptoms} and patient's lab report :{ self.state.report} to the
+                expert doctor on slack using slack mcp server.""",
+                agent = cardio_agent,
+                expected_output="Confirmation Message that Symptoms and Report is sent to Senior Doctor on Slack"
             )
-            
-            # Execute Review Task and save final text to state
-            self.state.prescription = str(Crew(agents=[cardio_agent], tasks=[cardio_task], verbose=False).kickoff())
-            print(f"[CARDIOLOGIST DOCTOR'S PRESCRIPTION AFTER ASSESSING THE REPORT]:\n{self.state.prescription}\n")
-            
-            
+
+
+            print('SENDING SYMPOTMS AND REPORT TO SENIOR DOCTOR ON SLACK')
+            slack = Crew( agents = [cardio_agent], tasks=[slack_post], verbose= False)
+            result = slack.kickoff()
+            print(f'{result.raw}')
 
         
         # STAGE 1: Initial Symptom Diagnosis Flow (Triggers on first visit)
@@ -335,10 +328,6 @@ class ClinicFlow(Flow[MyClinicStates]):
                 self.state.prescription = result.prescription_or_diet
                 print(f'Cardiologist Doctor Reply > {result.doctor_reply}\n')
 
-            
-
-        
-
     
     @listen("orthopedic")
     def orthopedic_node(self):
@@ -352,12 +341,9 @@ class ClinicFlow(Flow[MyClinicStates]):
             Stage 1: Initially diagnosing patient bone/joint trauma or pain to see if they are critical or normal.
             Stage 2: Thoroughly inspecting technical medical lab or imaging reports once generated, mapping results to symptoms, and issuing final prescriptions.""",
             llm=llm,
+            mcps= [slack_server],
             verbose=False
         )
-
-        # Sync doctor identity globally for the lab tracking
-        # self.state.doctor = 'Orthopedic Doctor'
-
         
         # Lab Report Review Flow (Triggers if report exists)
         
@@ -365,25 +351,19 @@ class ClinicFlow(Flow[MyClinicStates]):
             print("\n--- WELCOME BACK TO THE ORTHOPEDIC DEPARTMENT ---\n")
             print(f"[SYSTEM]: Dr. Bone Agent is now reviewing your Lab Report...\n")
             
-            # Simple review task returning a raw text prescription string
-            ortho_task = Task(
-                description=f"""Review this simulated lab report deeply:
-                Patient Name: {self.state.name}
-                Current Symptoms: {self.state.current_symptoms}
-                Generated Lab Report Data: '{self.state.report}'
-                
-                Based on these report values, provide the final medicine prescription, physical therapy layout, and recovery advice.""",
-                expected_output="Final clinical medicine prescription and bone recovery layout based on lab results.",
-                agent=ortho_agent
+            slack_post = Task(
+                description = f"""
+                Your task is to send patient's current sympotoms : {self.state.current_symptoms} and patient's lab report :{ self.state.report} to the
+                expert doctor on slack using slack mcp server.""",
+                agent = ortho_agent,
+                expected_output="Confirmation Message that Symptoms and Report is sent to Senior Doctor on Slack"
             )
-            
-            # Execute Review Task and save final text to state
-            self.state.prescription = str(Crew(agents=[ortho_agent], tasks=[ortho_task], verbose=False).kickoff())
-            
-            print(f"[ORTHOPEDIC DOCTOR'S PRESCRIPTION AFTER ASSESSING THE REPORT]:\n{self.state.prescription}\n")
-            # return  # Exits the loop cleanly
 
-        
+            print(f'{self.state.doctor_type} SENDING SYMPOTMS AND REPORT TO SENIOR DOCTOR ON SLACK')
+            slack = Crew( agents = [ortho_agent], tasks=[slack_post], verbose= False)
+            result = slack.kickoff()
+            print(f'{result.raw}')
+                    
         # Initial Symptom Diagnosis Flow (Triggers on first visit)
         
         else:
@@ -442,11 +422,9 @@ class ClinicFlow(Flow[MyClinicStates]):
             Stage 1: Initially diagnosing patient general health symptoms to see if they are critical or normal.
             Stage 2: Thoroughly inspecting technical medical lab reports once generated, mapping results to symptoms, and issuing final prescriptions.""",
             llm=llm,
+            mcps= [slack_server],
             verbose=False
         )
-
-        # Sync doctor identity globally for the lab tracking
-        # self.state.doctor = 'General Physician'
 
         
         # Lab Report Review Flow (Triggers if report exists)
@@ -455,23 +433,22 @@ class ClinicFlow(Flow[MyClinicStates]):
             print("\n--- WELCOME BACK TO THE GENERAL DEPARTMENT ---\n")
             print(f"[SYSTEM]: Dr. General Agent is now reviewing your Lab Report...\n")
             
-            # Simple review task returning a raw text prescription string
-            general_task = Task(
-                description=f"""Review this simulated lab report deeply:
-                Patient Name: {self.state.name}
-                Current Symptoms: {self.state.current_symptoms}
-                Generated Lab Report Data: '{self.state.report}'
-                
-                Based on these report values, provide the final medicine prescription, dosage, and general healthcare advice.""",
-                expected_output="Final clinical medicine prescription and primary care layout based on lab results.",
-                agent=general_agent
+        
+            slack_post = Task(
+                description = f"""
+                Your task is to send patient's current sympotoms : {self.state.current_symptoms} and patient's lab report :{ self.state.report} to the
+                expert doctor on slack using slack mcp server.""",
+                agent = general_agent,
+                expected_output="Confirmation Message that Symptoms and Report is sent to Senior Doctor on Slack"
             )
+
+
+            print(f'{self.state.doctor_type} SENDING SYMPOTMS AND REPORT TO SENIOR DOCTOR ON SLACK')
+            slack = Crew( agents = [general_agent], tasks=[slack_post], verbose= False)
+            result = slack.kickoff()
+            print(f'{result.raw}')
             
-            # Execute Review Task and save final text to state
-            self.state.prescription = str(Crew(agents=[general_agent], tasks=[general_task], verbose=False).kickoff())
-            
-            print(f"[GENERAL DOCTOR'S PRESCRIPTION AFTER ASSESSING THE REPORT]:\n{self.state.prescription}\n")
-            # return  # Exits the loop cleanly
+           
 
         
         # Initial Symptom Diagnosis Flow (Triggers on first visit)
